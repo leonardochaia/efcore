@@ -97,6 +97,13 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Metadata.Internal
             {
                 yield return new Annotation(SqlServerAnnotationNames.MemoryOptimized, true);
             }
+
+            if (table.EntityTypeMappings.First().EntityType.IsTemporal())
+            {
+                var value = table.EntityTypeMappings.First().EntityType[SqlServerAnnotationNames.Temporal];
+
+                yield return new Annotation(SqlServerAnnotationNames.Temporal, value);
+            }
         }
 
         /// <summary>
@@ -191,6 +198,17 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Metadata.Internal
             if (property.IsSparse() is bool isSparse)
             {
                 yield return new Annotation(SqlServerAnnotationNames.Sparse, isSparse);
+            }
+
+            var entityType = column.Table.EntityTypeMappings.First().EntityType;
+            if (entityType.IsTemporal()
+                && entityType[SqlServerAnnotationNames.Temporal] is SqlServerTemporalTableAnnotationValue annotationValue
+                && (column.Name == annotationValue.PeriodStartColumnName || column.Name == annotationValue.PeriodEndColumnName))
+            {
+                // TODO: should we use dedicated annotations for these?
+                yield return new Annotation(
+                    SqlServerAnnotationNames.Temporal,
+                    new SqlServerTemporalTableAnnotationValue(annotationValue.PeriodStartColumnName, annotationValue.PeriodEndColumnName, annotationValue.HistoryTableName));
             }
         }
     }

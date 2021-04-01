@@ -492,6 +492,13 @@ SELECT
     [t].[is_memory_optimized]";
             }
 
+            if (supportsTemporalTable)
+            {
+                commandText += @",
+    [t].[temporal_type],
+    (SELECT [t2].[name] FROM [sys].[tables] AS t2 WHERE [t2].[object_id] = [t].[history_table_id]) AS [history_table_name]";
+            }
+
             commandText += @"
 FROM [sys].[tables] AS [t]
 LEFT JOIN [sys].[extended_properties] AS [e] ON [e].[major_id] = [t].[object_id] AND [e].[minor_id] = 0 AND [e].[class] = 1 AND [e].[name] = 'MS_Description'";
@@ -540,6 +547,13 @@ SELECT
     CAST(0 AS bit) AS [is_memory_optimized]";
             }
 
+            if (supportsTemporalTable)
+            {
+                viewCommandText += @",
+    1 AS [temporal_type],
+    NULL AS [history_table_name]";
+            }
+
             viewCommandText += @"
 FROM [sys].[views] AS [v]
 LEFT JOIN [sys].[extended_properties] AS [e] ON [e].[major_id] = [v].[object_id] AND [e].[minor_id] = 0 AND [e].[class] = 1 AND [e].[name] = 'MS_Description'";
@@ -584,6 +598,15 @@ WHERE "
                         if (reader.GetValueOrDefault<bool>("is_memory_optimized"))
                         {
                             table[SqlServerAnnotationNames.MemoryOptimized] = true;
+                        }
+                    }
+
+                    if (supportsTemporalTable)
+                    {
+                        if (reader.GetValueOrDefault<int>("temporal_type") == 2)
+                        {
+                            var historyTableName = reader.GetValueOrDefault<string>("history_table_name");
+                            table[SqlServerAnnotationNames.Temporal] = new SqlServerTemporalTableAnnotationValue(null, null, historyTableName);
                         }
                     }
 

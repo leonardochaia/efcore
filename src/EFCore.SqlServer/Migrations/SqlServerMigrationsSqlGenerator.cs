@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Globalization;
 using System.IO;
 using System.Linq;
@@ -34,6 +35,8 @@ namespace Microsoft.EntityFrameworkCore.Migrations
     /// </summary>
     public class SqlServerMigrationsSqlGenerator : MigrationsSqlGenerator
     {
+        private const string DefaultSchema = "dbo";
+
         private IReadOnlyList<MigrationOperation> _operations = null!;
         private int _variableCounter;
 
@@ -543,7 +546,39 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 throw new ArgumentException(SqlServerStrings.CannotProduceUnterminatedSQLWithComments(nameof(CreateTableOperation)));
             }
 
-            base.Generate(operation, model, builder, terminate: false);
+            if (operation[SqlServerAnnotationNames.Temporal] is SqlServerTemporalTableAnnotationValue temporal)
+            {
+                builder
+                    .Append("CREATE TABLE ")
+                    .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
+                    .AppendLine(" (");
+
+                using (builder.Indent())
+                {
+                    CreateTableColumns(operation, model, builder);
+                    CreateTableConstraints(operation, model, builder);
+                    builder.AppendLine(",");
+
+                    Debug.Assert(temporal.PeriodStartColumnName != null, "PeriodStart shouldn't be null at this point.");
+                    Debug.Assert(temporal.PeriodEndColumnName != null, "PeriodEnd shouldn't be null at this point.");
+
+                    var start = Dependencies.SqlGenerationHelper.DelimitIdentifier(temporal.PeriodStartColumnName);
+                    var end = Dependencies.SqlGenerationHelper.DelimitIdentifier(temporal.PeriodEndColumnName);
+                    builder.AppendLine($"PERIOD FOR SYSTEM_TIME({start}, {end})");
+                }
+
+                builder.Append(") WITH (SYSTEM_VERSIONING = ON");
+                if (temporal.HistoryTableName != null)
+                {
+                    builder.Append($" (HISTORY_TABLE = {Dependencies.SqlGenerationHelper.DelimitIdentifier(temporal.HistoryTableName, operation.Schema ?? DefaultSchema)})");
+                }
+
+                builder.Append(")");
+            }
+            else
+            {
+                base.Generate(operation, model, builder, terminate: false);
+            }
 
             var memoryOptimized = IsMemoryOptimized(operation);
             if (memoryOptimized)
@@ -635,7 +670,25 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             MigrationCommandListBuilder builder,
             bool terminate = true)
         {
-            base.Generate(operation, model, builder, terminate: false);
+            if (operation[SqlServerAnnotationNames.Temporal] is SqlServerTemporalTableAnnotationValue temporalTableAnnotationValue)
+            {
+                builder.Append("ALTER TABLE ")
+                    .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(operation.Name, operation.Schema))
+                    .AppendLine("  SET (SYSTEM_VERSIONING = OFF)");
+
+                base.Generate(operation, model, builder, terminate: false);
+
+                Debug.Assert(temporalTableAnnotationValue.HistoryTableName != null, "History table name should never be null at this point");
+
+                builder.AppendLine();
+                builder
+                    .Append("DROP TABLE ")
+                    .Append(Dependencies.SqlGenerationHelper.DelimitIdentifier(temporalTableAnnotationValue.HistoryTableName, operation.Schema));
+            }
+            else
+            {
+                base.Generate(operation, model, builder, terminate: false);
+            }
 
             if (terminate)
             {
@@ -1501,6 +1554,19 @@ namespace Microsoft.EntityFrameworkCore.Migrations
                 builder.Append(" SPARSE");
             }
 
+            if (operation[SqlServerAnnotationNames.Temporal] is SqlServerTemporalTableAnnotationValue temporalTable)
+            {
+                builder.Append(" GENERATED ALWAYS AS ROW ");
+                if (name == temporalTable.PeriodStartColumnName)
+                {
+                    builder.Append("START");
+                }
+                else
+                {
+                    builder.Append("END");
+                }
+            }
+
             builder.Append(operation.IsNullable ? " NULL" : " NOT NULL");
 
             DefaultValue(operation.DefaultValue, operation.DefaultValueSql, columnType, builder);
@@ -2038,6 +2104,10 @@ namespace Microsoft.EntityFrameworkCore.Migrations
             => operation[SqlServerAnnotationNames.Identity] != null
                 || operation[SqlServerAnnotationNames.ValueGenerationStrategy] as SqlServerValueGenerationStrategy?
                 == SqlServerValueGenerationStrategy.IdentityColumn;
+
+        //private static bool IsTemporal(Annotatable annotatable)
+        //    => annotatable[SqlServerAnnotationNames.Temporal] is SqlServerTemporalTableAnnotationValue;
+
 
         private void GenerateExecWhenIdempotent(
             MigrationCommandListBuilder builder,

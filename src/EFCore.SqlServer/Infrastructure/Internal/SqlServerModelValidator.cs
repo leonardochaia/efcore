@@ -223,6 +223,12 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Infrastructure.Internal
         {
             var firstMappedType = mappedTypes[0];
             var isMemoryOptimized = firstMappedType.IsMemoryOptimized();
+            var firstTemporalAnnotation = firstMappedType.FindAnnotation(SqlServerAnnotationNames.Temporal);
+            if (firstTemporalAnnotation != null
+                && firstTemporalAnnotation.Value is SqlServerTemporalTableTransientAnnotationValue)
+            {
+                throw new InvalidOperationException("Annotation should not be transient at this point.");
+            }
 
             foreach (var otherMappedType in mappedTypes.Skip(1))
             {
@@ -233,6 +239,19 @@ namespace Microsoft.EntityFrameworkCore.SqlServer.Infrastructure.Internal
                             tableName, firstMappedType.DisplayName(), otherMappedType.DisplayName(),
                             isMemoryOptimized ? firstMappedType.DisplayName() : otherMappedType.DisplayName(),
                             !isMemoryOptimized ? firstMappedType.DisplayName() : otherMappedType.DisplayName()));
+                }
+
+                var temporalAnnotation = otherMappedType.FindAnnotation(SqlServerAnnotationNames.Temporal);
+                if (temporalAnnotation is null != firstTemporalAnnotation is null)
+                {
+                    throw new InvalidOperationException("Temporal annotation missing on root or derived.");
+                }
+
+                if (temporalAnnotation is not null
+                    && firstTemporalAnnotation is not null
+                    && temporalAnnotation.Value != firstTemporalAnnotation.Value)
+                {
+                    throw new InvalidOperationException("Temporal annotation values are different between root and derived.");
                 }
             }
 
